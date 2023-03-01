@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf8
 
+import datetime
 from pathlib import Path
 import subprocess
+from typing import Optional
 import requests
 import logging
 import os
@@ -13,7 +15,8 @@ from gphotos.restclient import RestClient
 
 log = logging.getLogger()
 logging.basicConfig(filename='gphotos_python.log',
-                    filemode='w+', # Collect logs
+                    filemode='a+', # Collect logs
+                    format='%(asctime)s %(levelname)-8s %(message)s',
                     level=os.getenv('LOG_LEVEL', logging.INFO))
 
 DEVICE_TYPE = 'PW2'
@@ -23,6 +26,7 @@ GPHOTOS_ALBUM_NAME = 'kindle'
 
 # ###############################################################
 OUTPUT_FILENAME = 'photo.jpg'
+ALLOWED_MIMETYPES = ['image/jpeg']
 SEEN_IMAGES_LIST = os.path.join('data','images_seen.txt')
 MAX_PAGE_SIZE = 50
 PAGE_SIZE = MAX_PAGE_SIZE
@@ -90,56 +94,73 @@ class ImageSelectionStrategies():
     # ]}
 
     @staticmethod
-    def random(photo_list):
+    def random(raw_photo_list: list) -> dict:
         log.info("Selecting image at random")
-        items_count = len(photo_list['mediaItems'])
-        media_item = None
-        while(not media_item):
-            idx = randrange(items_count)
-            log.debug(idx)
-            if "image/jpeg" in photo_list['mediaItems'][idx]['mimeType']:
-                media_item = photo_list['mediaItems'][idx]
-        return media_item
+        photo_list = [item for item in raw_photo_list if item['mimeType'] in ALLOWED_MIMETYPES]
+        return photo_list[randrange(len(photo_list))]
 
     @staticmethod
-    def latest(photo_list):
+    def latest(raw_photo_list: list) -> Optional[dict]:
         """Get the 'latest' image
         
         Keeps track of fetched images and selects the most
         recent, unseen one because the list only contains
         the creation date, not the date when a picture was
         added to the album.
+
+        Note that if the currently-displayed image is removed
+        from the album it will continue to be displayed until
+        a new one is uploaded.
         """
         log.info("Selecting latest image")
-        try:
-            with open(SEEN_IMAGES_LIST, 'r') as reader:
-                seen_images = reader.readlines()
-        except FileNotFoundError as ex:
-            log.warning(f"{SEEN_IMAGES_LIST} does not exist!")
-            seen_images = []
+        photo_list = [item for item in raw_photo_list if item['mimeType'] in ALLOWED_MIMETYPES]
+        
+        # Our "database" is a pipe-delimited file with these headings:
+        row_template = "{filename}|{created_at}|{first_seen_at}|{last_seen_at}|{id}"
+        run_at = str(datetime.datetime.now())
 
-        image_key_template = "{filename} {creation_time}"
+        if not os.path.isfile(SEEN_IMAGES_LIST):
+            log.warning(f"{SEEN_IMAGES_LIST} does not exist, creating")
+            open(SEEN_IMAGES_LIST, 'w').close()
 
-        image = None
-        for item in reversed(photo_list['mediaItems']):
-            image = item
-            image_key = image_key_template.format(filename=item['filename'],
-                                                  creation_time=item['mediaMetadata']['creationTime'])
-            if image_key in seen_images or f"{image_key}\n" in seen_images:
-                log.info(f"We have already seen '{image_key}'")
-                continue
-            log.info(f"We didn't see this last time: '{image_key}'")
-            break
+        with open(SEEN_IMAGES_LIST, 'r') as reader:
+            images_seen = reader.read().splitlines()
+
+        # Let's load into memory as a list of lists:
+        # [ ['file1.jpg', '1999-01-01T..', '1999-01-01T..', '1999-01-01T..', 'anidentifier..'], [..], ..]
+        images_seen_identifiers = [item[4] for item in [entry.split('|') for entry in images_seen if entry]]
+        
+        new_images = []
+        reencountered_images = []
+        new_image_to_display = None
+        for item in photo_list:
+            try:
+                index = images_seen_identifiers.index(item['id'])
+            except ValueError:
+                log.info(f"We didn't see this last time: '{item['filename']} {item['mediaMetadata']['creationTime']}'")
+                new_images.append(row_template.format(filename=item['filename'],
+                                                      created_at=item['mediaMetadata']['creationTime'],
+                                                      first_seen_at=run_at,
+                                                      last_seen_at=run_at,
+                                                      id=item['id']
+                ))
+                new_image_to_display = item
+            else:
+                log.info(f"We have already seen '{item['filename']} {item['mediaMetadata']['creationTime']}'")
+                parsed_image_seen = images_seen[index].split('|')
+                reencountered_images.append(row_template.format(filename=parsed_image_seen[0],
+                                                                created_at=parsed_image_seen[1],
+                                                                first_seen_at=parsed_image_seen[2],
+                                                                last_seen_at=run_at,
+                                                                id=parsed_image_seen[4]
+                ))
         
         # Save the list of images we know about
-        with open(SEEN_IMAGES_LIST, 'w+') as writer:
-            image_keys = [
-                f"{image_key_template.format(filename=i['filename'], creation_time=i['mediaMetadata']['creationTime'])}\n"
-                for i in photo_list['mediaItems']
-            ]
-            writer.writelines(image_keys)
+        with open(SEEN_IMAGES_LIST, 'w') as writer:
+            for line in (reencountered_images + new_images):
+                writer.write(line + '\n')
 
-        return image
+        return new_image_to_display
 
 
 ### Main app class
@@ -180,16 +201,17 @@ class KindleGphotos:
         ### Get list of images
         body = {
                 "pageSize": PAGE_SIZE,
-                "albumId":  album['id'],
-            #    "filters": {
-            #        "mediaTypeFilter": {"mediaTypes":  ["PHOTO"]},
-            #    },
+                "albumId":  album['id']
             }
         log.info(f"Fetching photos from '{album['title']}'")
         # FIXME: fetch all pages, not just the first one!
         photo_list = self.google_photos_client.mediaItems.search.execute(body).json()
         strategies = ImageSelectionStrategies()
-        media_item = getattr(strategies, IMAGE_SELECTION_STRATEGY)(photo_list)
+        media_item = getattr(strategies, IMAGE_SELECTION_STRATEGY)(photo_list['mediaItems'])
+
+        if not media_item:
+            log.info(f"No image returned by '{IMAGE_SELECTION_STRATEGY}' strategy; assuming no change is needed")
+            return
 
         ### Download photo
         log.info(f"Fetching {media_item['filename']}")
@@ -226,17 +248,17 @@ def _post_process_photo(file, is_vertical):
     log.info(f"Attempting to post-process '{file}'")
     command = (
         f"{IMAGEMAGICK_PATH} {file}"
-        #" -auto-orient "
-        #" -resize x758 "
+        #" -auto-orient"
+        #" -resize x758"
         #" -gravity center"
         f" -rotate {270 if not is_vertical else 0}"
         " -filter LanczosSharp"
         " -brightness-contrast 3x15"
         " -gravity center"
-        " +repage "
-        " -colorspace Gray "
-        " -dither FloydSteinberg "
-        f" -remap {KINDLE_COLORS_GIF_PATH} "
+        " +repage"
+        " -colorspace Gray"
+        " -dither FloydSteinberg"
+        f" -remap {KINDLE_COLORS_GIF_PATH}"
         " -quality 75"
         " -define png:color-type=0"
         " -define png:bit-depth=8"
@@ -253,4 +275,3 @@ def _post_process_photo(file, is_vertical):
 
 if __name__ == '__main__':
     KindleGphotos().main()
-    exit(0)
