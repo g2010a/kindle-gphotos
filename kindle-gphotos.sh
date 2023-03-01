@@ -2,9 +2,9 @@
 
 # #############################################################################
 # USER-DEFINED VARIABLES
-DEVICE="PW2"                  # [PW2|PW3] Different devices require different logic; only PW2 is supported right now
+DEVICE="PW2"                 # [PW2|PW3] Different devices require different logic; only PW2 is supported right now
 SLEEP_HOURS=3                # Time to sleep between refreshes
-BATTERY_ALERT_THRESHOLD=10    # Threshold after which battery value will be printed on screen
+BATTERY_ALERT_THRESHOLD=10   # Threshold after which battery value will be printed on screen
 LOW_BATTERY_SLEEP_HOURS=$((5*24)) # Deep sleep when battery has reached the alert threshold
 # #############################################################################
 
@@ -21,11 +21,11 @@ FONT="regular=/usr/java/lib/fonts/Palatino-Regular.ttf"
 # #############################################################################
 # PATHS TO EXECUTABLES
 fbink_cmd="fbink -q"
-if [ "$DEVICE" == "PW3" ]; then
+if [ "$DEVICE" = "PW3" ]; then
     framebuf_rotate_cmd="/sys/devices/platform/imx_epdc_fb/graphics/fb0/rotate"
     backlight_cmd="/sys/devices/platform/imx-i2c.0/i2c-0/0-003c/max77696-bl.0/backlight/max77696-bl/brightness"
     rtc_device='/dev/rtc0'
-elif [ "$DEVICE" == "PW2" ]; then
+elif [ "$DEVICE" = "PW2" ]; then
     framebuf_rotate_cmd="/sys/devices/platform/mxc_epdc_fb/graphics/fb0/rotate"
     backlight_cmd="/sys/devices/system/fl_tps6116x/fl_tps6116x0/fl_intensity"
     rtc_device='/dev/rtc0'
@@ -60,7 +60,6 @@ shave_processes() {
     ### give an update to the outside world...
     echo 0 > $framebuf_rotate_cmd
     $fbink_cmd -w -c -f -m -t $FONT,size=20,top=410,bottom=0,left=0,right=0 "Starting gphotos..." > /dev/null 2>&1
-    #echo 3 > $framebuf_rotate_cmd
     sleep 1
     stop otaupd
     stop phd
@@ -93,7 +92,7 @@ echo -n 0 > $backlight_cmd
 log_info "------------------------------------------------------------------------"
 shave_processes
 
-### If we have a wan module installed...
+### FIXME: If we have a wan module installed...
 #if [ -f /usr/sbin/wancontrol ]
 #then
 #    wancontrol wanoffkill
