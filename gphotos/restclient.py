@@ -34,6 +34,7 @@ class RestClient:
 
     def __init__(self, api_url: str, auth_session: Session):
         """ """
+        log.info("Initializing REST client")
         self.auth_session: Session = auth_session
         service_document = self.auth_session.get(api_url).json()
         self.json: JSONType = service_document

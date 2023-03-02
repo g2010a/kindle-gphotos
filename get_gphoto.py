@@ -14,8 +14,8 @@ from gphotos.authorize import Authorize
 from gphotos.restclient import RestClient
 
 log = logging.getLogger()
-logging.basicConfig(filename='gphotos_python.log',
-                    filemode='a+', # Collect logs
+logging.basicConfig(#filename='gphotos_python.log',
+                    #filemode='a+', # Collect logs
                     format='%(asctime)s %(levelname)-8s %(message)s',
                     level=os.getenv('LOG_LEVEL', logging.INFO))
 
@@ -183,7 +183,12 @@ class KindleGphotos:
 
         log.info("Authorizing...")
         self.auth.authorize()
-        self.google_photos_client = RestClient(photos_api_url, self.auth.session)
+        try:
+            self.google_photos_client = RestClient(photos_api_url, self.auth.session)
+        except Exception as e:
+            log.error(f"Could not instantiate REST client: {e}")
+            print(e)
+            exit(1)
 
     def start(self):
         log.info("Starting up...")
@@ -274,4 +279,5 @@ def _post_process_photo(file, is_vertical):
 
 
 if __name__ == '__main__':
+    log.info("---------------------------RUNNING---------------------------")
     KindleGphotos().main()

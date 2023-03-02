@@ -13,6 +13,7 @@ LOW_BATTERY_SLEEP_HOURS=$((5*24)) # Deep sleep when battery has reached the aler
 # SCRIPT VARIABLES
 SCRIPT_DIR=$(pwd)
 LOG_FILENAME='gphotos.log'
+PYTHON_LOG_FILENAME='gphotos_python.log'
 LOG_PATH="${SCRIPT_DIR}/${LOG_FILENAME}"
 FONT="regular=/usr/java/lib/fonts/Palatino-Regular.ttf"
 # #############################################################################
@@ -59,7 +60,9 @@ shave_processes() {
     stop lab126_gui
     ### give an update to the outside world...
     echo 0 > $framebuf_rotate_cmd
-    $fbink_cmd -w -c -f -m -t $FONT,size=20,top=410,bottom=0,left=0,right=0 "Starting gphotos..." > /dev/null 2>&1
+    $fbink_cmd -w -c -f -m \
+        -t $FONT,size=20,top=410,bottom=0,left=0,right=0 \
+        "Starting gphotos..." > /dev/null 2>&1
     sleep 1
     stop otaupd
     stop phd
@@ -142,21 +145,22 @@ while true; do
     log_info "Getting new image..."
     battery_level=$(gasgauge-info -s)
     $fbink_cmd -x 20 "Getting new image..."
-    if ./get_gphoto.py; then
+    if ./get_gphoto.py >> $PYTHON_LOG_FILENAME 2>&1 ; then
         log_info "Python script finished"
+        if [ -f "photo.jpg.png" ]; then
+            log_info "Found PNG"
+            fbink -q -c -f -i photo.jpg.png -g w=-1,h=-1,dither=PASSTHROUGH
+        else
+            log_info "Found JPG"
+            fbink -q -c -f -i photo.jpg -g w=-1,h=-1,dither=PASSTHROUGH
+        fi
     else
+        $fbink_cmd -x 20 -y 1 "ERROR: See python logs!"
+        last_logged_line=$(tail -n 1 ${PYTHON_LOG_FILENAME})
+        $fbink_cmd -x 1 -y 2 "${last_logged_line}"
         log_error "Python script failed! Exit status: $?"
     fi
         
-    # TODO: rotate accordingly
-    if [ -f "photo.jpg.png" ]; then
-        log_info "Found PNG"
-        fbink -q -c -f -i photo.jpg.png -g w=-1,h=-1,dither=PASSTHROUGH
-    else
-        log_info "Found JPG"
-        fbink -q -c -f -i photo.jpg -g w=-1,h=-1,dither=PASSTHROUGH
-    fi
-
     log_info "Battery level: ${battery_level}%"
 
     ### Enable powersave
